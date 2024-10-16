@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app)  # This will allow all domains by default
 # Initialize the speech recognizer
 recognizer = sr.Recognizer()
-
+currLength = None
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -38,6 +38,15 @@ def upload_file():
     try:
         # Convert the audio file to PCM WAV format using pydub
         audio = AudioSegment.from_file(save_path)
+        #start_time = 0  # 5 seconds
+        #end_time = 4000   # 15 seconds
+
+        # Trim the audio
+        
+        # global currLength
+        # trimmed_audio = audio[currLength:]
+        # currLength = len(audio)
+        print("Audio Length: ", currLength)
         pcm_wav_path = os.path.splitext(save_path)[0] + "_converted.wav"
         audio.export(pcm_wav_path, format="wav", codec="pcm_s16le")
 
@@ -76,6 +85,6 @@ def upload_file():
 if __name__ == '__main__':
     # Ensure the 'uploads' directory exists
     print("Server Started")
-    
+    currLength = 0
     os.makedirs('uploads', exist_ok=True)
     app.run(debug=True, host='127.0.0.1', port=5000)
