@@ -32,11 +32,13 @@ chrome.runtime.onMessage.addListener(async (message) => {
 
 let recorder;
 let data = [];
+let recordingSessionId; // Variable to hold unique session ID
 
 async function startRecording(streamId) {
   if (recorder?.state === 'recording') {
     throw new Error('Called startRecording while recording is in progress.');
   }
+  recordingSessionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   const media = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -59,7 +61,7 @@ async function startRecording(streamId) {
         if (event.data.size > 0) {
             data.push(event.data);
             const blob = new Blob(data, { type: 'video/webm' });
-            sendBlobToBackend(blob);
+            sendBlobToBackend(blob, recordingSessionId);
             //alert(data)
             //data=[]
         }
@@ -72,6 +74,7 @@ async function startRecording(streamId) {
     // Clear state ready for next recording
     recorder = undefined;
     data = [];
+    recordingSessionId = null; // Clear session ID for next recording
   };
     //recorder.start();
     recorder.start(10000)
@@ -79,9 +82,10 @@ async function startRecording(streamId) {
   window.location.hash = 'recording';
 }
 let count = 0;
-function sendBlobToBackend(blob) {
+function sendBlobToBackend(blob, sessionId) {
     const formData = new FormData();
     formData.append("file", blob, "audio"+count+".wav"); // Append the blob with a filename
+    formData.append("session_id", sessionId); // Add the session ID to the form data
 
     count++;
     fetch("http://localhost:5000/upload", {
