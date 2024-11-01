@@ -1,19 +1,13 @@
-// Copyright 2023 Google LLC
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     https://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 let audioChunks = [];
-let backendURL = 'http://127.0.0.1:5000/upload';
+let backendURL = 'http://127.0.0.1:8080/api/v1/audio/upload'; // FastAPI server URL
+
+function generateUUID() {
+  // Generates a valid UUID (v4)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 chrome.runtime.onMessage.addListener(async (message) => {
   if (message.target === 'offscreen') {
@@ -33,12 +27,13 @@ chrome.runtime.onMessage.addListener(async (message) => {
 let recorder;
 let data = [];
 let recordingSessionId; // Variable to hold unique session ID
+let count = 0; // Sequence number for each chunk
 
 async function startRecording(streamId) {
   if (recorder?.state === 'recording') {
     throw new Error('Called startRecording while recording is in progress.');
   }
-  recordingSessionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  recordingSessionId = generateUUID(); // Use a valid UUID
 
   const media = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -55,46 +50,117 @@ async function startRecording(streamId) {
   source.connect(output.destination);
 
   // Start recording.
-  recorder = new MediaRecorder(media, { mimeType: 'video/webm' });
-    //recorder.ondataavailable = (event) => data.push(event.data);
-    recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-            data.push(event.data);
-            const blob = new Blob(data, { type: 'video/webm' });
-            sendBlobToBackend(blob, recordingSessionId);
-            //alert(data)
-            //data=[]
-        }
+  recorder = new MediaRecorder(media, { mimeType: 'audio/webm' });
+  recorder.ondataavailable = async (event) => {
+    if (event.data.size > 0) {
+      data.push(event.data);
+      const blob = new Blob(data, { type: 'audio/webm' });
+      const wavBlob = await convertWebmToWav(blob); // Convert to WAV format
+      sendBlobToBackend(wavBlob, recordingSessionId, false); // `is_final` set to false for regular chunks
     }
-  recorder.onstop = () => {
-      //const blob = new Blob(data, { type: 'video/webm' });
-      //sendBlobToBackend(blob);
-    //window.open(URL.createObjectURL(blob), '_blank');
-
-    // Clear state ready for next recording
+  };
+  
+  recorder.onstop = async () => {
+    // Send the last chunk of audio data with `is_final` set to true
+    if (data.length > 0) {
+      const blob = new Blob(data, { type: 'audio/webm' });
+      const wavBlob = await convertWebmToWav(blob); // Convert to WAV format
+      sendBlobToBackend(wavBlob, recordingSessionId, true); // `is_final` set to true for the last chunk
+    }
+    
+    // Clear state ready for the next recording
     recorder = undefined;
     data = [];
     recordingSessionId = null; // Clear session ID for next recording
+    count = 0; // Reset sequence number
   };
-    //recorder.start();
-    recorder.start(10000)
+
+  recorder.start(10000); // Start recording with a time slice of 10 seconds
 
   window.location.hash = 'recording';
 }
-let count = 0;
-function sendBlobToBackend(blob, sessionId) {
+
+async function convertWebmToWav(blob) {
+  // Use AudioContext to decode and convert audio to WAV format
+  const audioContext = new AudioContext();
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+  // Prepare WAV file data
+  const wavBuffer = audioBufferToWav(audioBuffer);
+  return new Blob([wavBuffer], { type: 'audio/wav' });
+}
+
+function audioBufferToWav(audioBuffer) {
+  const numOfChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+
+  // Calculate buffer size
+  let samples = audioBuffer.length * numOfChannels;
+  let buffer = new ArrayBuffer(44 + samples * 2);
+  let view = new DataView(buffer);
+
+  // Write WAV header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numOfChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numOfChannels * 2, true);
+  view.setUint16(32, numOfChannels * 2, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples * 2, true);
+
+  // Write PCM samples
+  let offset = 44;
+  for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+    let channel = audioBuffer.getChannelData(i);
+    for (let j = 0; j < channel.length; j++) {
+      view.setInt16(offset, channel[j] * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+
+  return buffer;
+}
+
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+async function sendBlobToBackend(blob, sessionId, isFinal) {
+  try {
     const formData = new FormData();
-    formData.append("file", blob, "audio"+count+".wav"); // Append the blob with a filename
-    formData.append("session_id", sessionId); // Add the session ID to the form data
+    formData.append("audio_file", blob, `chunk${count}.wav`); // Send as WAV
+    formData.append("session_id", sessionId);
+    formData.append("sequence_number", count);
+    formData.append("is_final", isFinal.toString());
 
     count++;
-    fetch("http://localhost:5000/upload", {
-        method: "POST",
-        body: formData
-    })
-        .then(response => response.json())
-        .then(data => console.log("Success:", data))
-        .catch(error => console.error("Error:", error));
+
+    const response = await fetch(backendURL, {
+      method: "POST",
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Error ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log("Success:", responseData);
+  } catch (error) {
+    console.error("Error:", error);
+  }
 }
 
 async function stopRecording() {
@@ -105,5 +171,4 @@ async function stopRecording() {
 
   // Update current state in URL
   window.location.hash = '';
-
 }
