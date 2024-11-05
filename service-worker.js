@@ -55,3 +55,8 @@ chrome.action.onClicked.addListener(async (tab) => {
 
   chrome.action.setIcon({ path: '/icons/recording.png' });
 });
+
+chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error(error));
+
