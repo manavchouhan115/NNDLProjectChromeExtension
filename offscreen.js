@@ -75,7 +75,7 @@ async function startRecording(streamId) {
     count = 0; // Reset sequence number
   };
 
-  recorder.start(10000); // Start recording with a time slice of 10 seconds
+  recorder.start(30000); // Start recording with a time slice of 10 seconds
 
   window.location.hash = 'recording';
 }
@@ -157,7 +157,10 @@ async function sendBlobToBackend(blob, sessionId, isFinal) {
     }
 
     const responseData = await response.json();
+    const messageString = responseData['summary'];
+    chrome.runtime.sendMessage({ type: "message-update", messageString });
     console.log("Success:", responseData);
+
   } catch (error) {
     console.error("Error:", error);
   }

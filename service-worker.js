@@ -56,6 +56,14 @@ chrome.action.onClicked.addListener(async (tab) => {
   chrome.action.setIcon({ path: '/icons/recording.png' });
 });
 
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "message-update") {
+    // Forward messageString to `index1.js`
+    chrome.runtime.sendMessage({ type: "display-message", messageString: message.messageString });
+  }
+});
+
+
 chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
     .catch((error) => console.error(error));
